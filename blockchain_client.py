@@ -1,6 +1,8 @@
 import json
 from typing import Any, Tuple
 
+import eth_abi
+from eth_abi.abi import encode
 from eth_account import Account
 from web3 import Web3
 from web3.providers import HTTPProvider
@@ -89,23 +91,36 @@ class BlockchainClient:
         message_hash: bytes,
         gas_limit: int = 100_000_000,
     ) -> Tuple[bool, dict]:
-        # Парсим ключ и подпись
+        # 1. Парсим ключ и подпись в структуры (как у вас уже было)
         A, t, rho = MLDSAKeyParser.parse_public_key(ml_dsa_public_key)
-        pk = {"A": A, "t": t, "rho": rho}
+        pk_struct = {"A": A, "t": t, "rho": rho}
 
         z, h, c = MLDSAKeyParser.parse_signature(ml_dsa_signature)
-        sig = {"z": z, "h": h, "c": c}
+        sig_struct = {
+            "z": z,
+            "h": h,
+            "c": "0x" + c.hex() if isinstance(c, bytes) else c,
+        }
 
-        # Проверяем структуры
-        print(f"pk['A'][0][0][:5]: {pk['A'][0][0][:5]}")
-        print(f"sig['z'][0][:5]: {sig['z'][0][:5]}")
-        print(f"sig['c']: {sig['c'].hex()}")
+        # 2. Кодируем структуры в ABI-байты
+        # Типы: publicKey (tuple), signature (tuple)
+        pk_tuple = (A, t, rho)
+        # Тип: кортеж из трёх компонентов: uint256[][][], uint256[][], uint256[][]
+        pk_encoded = encode(["(uint256[][][],uint256[][],uint256[][])"], [pk_tuple])
 
-        contract = self.w3.eth.contract(address=contract_address, abi=contract_abi)
+        # 2. Кодируем подпись как один кортеж
+        sig_tuple = (z, h, c)  # c — bytes32
+        sig_encoded = encode(["(uint256[][],uint256[][],bytes32)"], [sig_tuple])
 
+        # 3. Вызываем контракт с байтовыми параметрами
+        contract: Contract = self.w3.eth.contract(
+            address=contract_address, abi=contract_abi
+        )
+
+        # Вариант A: через build_transaction
         nonce = self.w3.eth.get_transaction_count(self.address)
         tx = contract.functions.submitAndVerify(
-            sig, pk, message_hash
+            pk_encoded, sig_encoded, message_hash
         ).build_transaction(
             {
                 "from": self.address,
@@ -114,6 +129,9 @@ class BlockchainClient:
                 "gasPrice": self.w3.eth.gas_price,
             }
         )
+
+        # Вариант B: если хотите использовать encodeABI напрямую
+        # data = contract.encodeABI(fn_name="submitAndVerify", args=[pk_encoded, sig_encoded, message_hash])
 
         signed = self.account.sign_transaction(tx)
         tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -124,3 +142,21 @@ class BlockchainClient:
         print(f"Статус: {'✅ успех' if success else '❌ неудача'}")
         print(f"Газ использовано: {receipt['gasUsed']}")
         return success, dict(receipt)
+
+    def simulate_verify_call(
+        self,
+        contract_address: str,
+        contract_abi: list,
+        ml_dsa_public_key: bytes,
+        ml_dsa_signature: bytes,
+        message_hash: bytes,
+    ) -> Tuple[bool, str]:
+        """Симулирует вызов submitAndVerify, возвращает success и сообщение об ошибке."""
+        contract = self.w3.eth.contract(address=contract_address, abi=contract_abi)
+        try:
+            result = contract.functions.submitAndVerify(
+                ml_dsa_public_key, ml_dsa_signature, message_hash
+            ).call({"from": self.address})
+            return True, str(result)
+        except Exception as e:
+            return False, str(e)
