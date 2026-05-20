@@ -1,0 +1,4 @@
+FreshCryptoLib/=lib/FreshCryptoLib/solidity/src/
+forge-std/=lib/forge-std/src/
+solady/=lib/solady/src/
+@solidity/=lib/FreshCryptoLib/solidity/src/
