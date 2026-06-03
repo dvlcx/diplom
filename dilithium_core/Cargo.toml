@@ -1,0 +1,9 @@
+[package]
+name = "dilithium_core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pqc_dilithium = { git = "https://github.com/y-pakorn/dilithium/" }
+hex = "0.4.3"
+rand = "0.8.5"
